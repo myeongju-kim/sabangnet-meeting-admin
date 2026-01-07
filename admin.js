@@ -3,7 +3,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
     getFirestore, doc, setDoc, deleteDoc,
-    collection, query, orderBy, limit, getDocs, serverTimestamp
+    collection, query, orderBy, limit, getDocs, serverTimestamp, Timestamp, getDoc, where
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -36,8 +36,15 @@ const dateEl = $("date");
 const typeEl = $("type");
 const tbody = $("tbody");
 
+// Boards UI refs
+const selectedPresenterPill = $("selectedPresenterPill");
+const btnBoardsReload = $("btnBoardsReload");
+const boardsTbody = $("boardsTbody");
+
+
 // edit state
 let currentDocId = null; // when editing existing doc
+let selectedPresenterIdForBoards = null;
 
 function showMsg(text, kind = "muted") {
     msgEl.innerHTML = "";
@@ -186,6 +193,89 @@ async function loadPresenters() {
     }
 }
 
+// [ADD] util: createdAt 표시용
+function formatCreatedAt(v) {
+    // Firestore Timestamp 또는 null
+    try {
+        if (!v) return "";
+        // Timestamp has toDate()
+        if (typeof v.toDate === "function") {
+            const d = v.toDate();
+            const yy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, "0");
+            const dd = String(d.getDate()).padStart(2, "0");
+            const hh = String(d.getHours()).padStart(2, "0");
+            const mi = String(d.getMinutes()).padStart(2, "0");
+            return `${yy}-${mm}-${dd} ${hh}:${mi}`;
+        }
+        return String(v);
+    } catch {
+        return "";
+    }
+}
+
+function renderBoardsEmpty(message) {
+    boardsTbody.innerHTML = `<tr><td colspan="4" class="muted">${escapeHtml(message)}</td></tr>`;
+}
+
+function renderBoards(rows) {
+    boardsTbody.innerHTML = "";
+    if (!rows.length) {
+        renderBoardsEmpty("댓글(boards)이 없습니다.");
+        return;
+    }
+
+    for (const r of rows) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+      <td>${escapeHtml(formatCreatedAt(r.createdAt))}</td>
+      <td class="mono">${escapeHtml(r.nickname ?? "")}</td>
+      <td class="boardText">${escapeHtml(r.message ?? "")}</td>
+      <td>
+        <button data-baction="delete" data-bid="${escapeAttr(r.id)}" class="danger">삭제</button>
+      </td>
+    `;
+        boardsTbody.appendChild(tr);
+    }
+}
+
+async function loadBoards(presenterId) {
+    if (!presenterId) {
+        renderBoardsEmpty("발표자를 선택하세요.");
+        return;
+    }
+
+    try {
+        boardsTbody.innerHTML = `<tr><td colspan="4" class="muted">불러오는 중...</td></tr>`;
+
+        // subcollection: presenters/{presenterId}/boards
+        const boardsCol = collection(db, "presenters", presenterId, "boards");
+        const q = query(boardsCol, orderBy("createdAt", "desc"), limit(200));
+        const snap = await getDocs(q);
+
+        const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderBoards(rows);
+    } catch (e) {
+        console.error(e);
+        renderBoardsEmpty(`로드 실패: ${escapeHtml(String(e?.message ?? e))}`);
+    }
+}
+
+async function deleteBoard(presenterId, boardId) {
+    if (!presenterId || !boardId) return;
+    if (!confirm(`댓글을 삭제할까요?\n\npresenter: ${presenterId}\nboard: ${boardId}`)) return;
+
+    try {
+        await deleteDoc(doc(db, "presenters", presenterId, "boards", boardId));
+        showMsg(`댓글 삭제 완료: ${boardId}`, "ok");
+        await loadBoards(presenterId);
+    } catch (e) {
+        console.error(e);
+        showMsg(String(e?.message ?? e), "err");
+    }
+}
+
+
 // Row actions: edit/delete
 tbody.addEventListener("click", (ev) => {
     const btn = ev.target?.closest?.("button");
@@ -214,6 +304,12 @@ tbody.addEventListener("click", (ev) => {
         typeEl.value = type || "GENERAL";
         btnSave.textContent = `수정 저장 (${id})`;
         window.scrollTo({ top: 0, behavior: "smooth" });
+
+        selectedPresenterIdForBoards = id;
+        selectedPresenterPill.textContent = `선택된 발표자: ${id}`;
+        btnBoardsReload.disabled = false;
+        loadBoards(id);
+
         return;
     }
 });
@@ -232,6 +328,8 @@ onAuthStateChanged(auth, (user) => {
 
     if (!loggedIn) {
         tbody.innerHTML = `<tr><td colspan="6" class="muted">로그인 후 목록이 표시됩니다.</td></tr>`;
+        boardsTbody.innerHTML = `<tr><td colspan="4" class="muted">로그인 후 목록이 표시됩니다.</td></tr>`;
+
         showMsg("Google 로그인 후 사용하세요.", "muted");
     } else {
         showMsg("로그인 완료. Presenter CRUD 가능.", "ok");
@@ -253,6 +351,22 @@ btnLogout.addEventListener("click", async () => {
         showMsg(String(e?.message ?? e), "err");
     }
 });
+
+boardsTbody.addEventListener("click", (ev) => {
+    const btn = ev.target?.closest?.("button");
+    if (!btn) return;
+    const action = btn.dataset.baction;
+    const bid = btn.dataset.bid;
+    if (action === "delete" && bid) {
+        deleteBoard(selectedPresenterIdForBoards, bid);
+    }
+});
+
+btnBoardsReload.addEventListener("click", () => {
+    loadBoards(selectedPresenterIdForBoards);
+});
+
+
 
 btnReload.addEventListener("click", loadPresenters);
 btnSave.addEventListener("click", upsertPresenter);
