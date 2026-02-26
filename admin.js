@@ -40,11 +40,15 @@ const tbody = $("tbody");
 const selectedPresenterPill = $("selectedPresenterPill");
 const btnBoardsReload = $("btnBoardsReload");
 const boardsTbody = $("boardsTbody");
+const selectedQnaDateKeyPill = $("selectedQnaDateKeyPill");
+const btnQnaReload = $("btnQnaReload");
+const qnaTbody = $("qnaTbody");
 
 
 // edit state
 let currentDocId = null; // when editing existing doc
 let selectedPresenterIdForBoards = null;
+let selectedPresenterDateKeyForQna = null;
 
 function showMsg(text, kind = "muted") {
     msgEl.innerHTML = "";
@@ -218,6 +222,10 @@ function renderBoardsEmpty(message) {
     boardsTbody.innerHTML = `<tr><td colspan="4" class="muted">${escapeHtml(message)}</td></tr>`;
 }
 
+function renderQnaEmpty(message) {
+    qnaTbody.innerHTML = `<tr><td colspan="6" class="muted">${escapeHtml(message)}</td></tr>`;
+}
+
 function renderBoards(rows) {
     boardsTbody.innerHTML = "";
     if (!rows.length) {
@@ -236,6 +244,36 @@ function renderBoards(rows) {
       </td>
     `;
         boardsTbody.appendChild(tr);
+    }
+}
+
+function timestampMillis(v) {
+    if (!v) return 0;
+    if (typeof v.toMillis === "function") return v.toMillis();
+    if (typeof v.seconds === "number") return (v.seconds * 1000) + Math.floor((v.nanoseconds || 0) / 1000000);
+    return 0;
+}
+
+function renderQna(rows) {
+    qnaTbody.innerHTML = "";
+    if (!rows.length) {
+        renderQnaEmpty("QnA가 없습니다.");
+        return;
+    }
+
+    for (const r of rows) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+      <td>${escapeHtml(formatCreatedAt(r.createdAt))}</td>
+      <td class="mono">${escapeHtml(r.to ?? "")}</td>
+      <td class="qnaText">${escapeHtml(r.content ?? "")}</td>
+      <td>${r.presenterDateKey ?? ""}</td>
+      <td class="mono">${escapeHtml(r.id)}</td>
+      <td>
+        <button data-qaction="delete" data-qid="${escapeAttr(r.id)}" class="danger">삭제</button>
+      </td>
+    `;
+        qnaTbody.appendChild(tr);
     }
 }
 
@@ -261,6 +299,28 @@ async function loadBoards(presenterId) {
     }
 }
 
+async function loadQna(dateKey = null) {
+    try {
+        renderQnaEmpty("불러오는 중...");
+
+        let qnaQuery;
+        if (dateKey === null || dateKey === undefined) {
+            qnaQuery = query(collection(db, "qna"), orderBy("createdAt", "desc"), limit(200));
+        } else {
+            // where + limit 으로 조회 후 클라이언트 정렬하여 복합 인덱스 요구를 피함
+            qnaQuery = query(collection(db, "qna"), where("presenterDateKey", "==", dateKey), limit(200));
+        }
+
+        const snap = await getDocs(qnaQuery);
+        const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        rows.sort((a, b) => timestampMillis(b.createdAt) - timestampMillis(a.createdAt));
+        renderQna(rows);
+    } catch (e) {
+        console.error(e);
+        renderQnaEmpty(`로드 실패: ${escapeHtml(String(e?.message ?? e))}`);
+    }
+}
+
 async function deleteBoard(presenterId, boardId) {
     if (!presenterId || !boardId) return;
     if (!confirm(`댓글을 삭제할까요?\n\npresenter: ${presenterId}\nboard: ${boardId}`)) return;
@@ -269,6 +329,20 @@ async function deleteBoard(presenterId, boardId) {
         await deleteDoc(doc(db, "presenters", presenterId, "boards", boardId));
         showMsg(`댓글 삭제 완료: ${boardId}`, "ok");
         await loadBoards(presenterId);
+    } catch (e) {
+        console.error(e);
+        showMsg(String(e?.message ?? e), "err");
+    }
+}
+
+async function deleteQna(qnaId) {
+    if (!qnaId) return;
+    if (!confirm(`QnA를 삭제할까요?\n\nqnaId: ${qnaId}`)) return;
+
+    try {
+        await deleteDoc(doc(db, "qna", qnaId));
+        showMsg(`QnA 삭제 완료: ${qnaId}`, "ok");
+        await loadQna(selectedPresenterDateKeyForQna);
     } catch (e) {
         console.error(e);
         showMsg(String(e?.message ?? e), "err");
@@ -310,6 +384,13 @@ tbody.addEventListener("click", (ev) => {
         btnBoardsReload.disabled = false;
         loadBoards(id);
 
+        selectedPresenterDateKeyForQna = Number(dateKey) || null;
+        selectedQnaDateKeyPill.textContent = selectedPresenterDateKeyForQna
+            ? `선택된 presenterDateKey: ${selectedPresenterDateKeyForQna}`
+            : "선택된 presenterDateKey: 전체";
+        btnQnaReload.disabled = false;
+        loadQna(selectedPresenterDateKeyForQna);
+
         return;
     }
 });
@@ -329,11 +410,17 @@ onAuthStateChanged(auth, (user) => {
     if (!loggedIn) {
         tbody.innerHTML = `<tr><td colspan="6" class="muted">로그인 후 목록이 표시됩니다.</td></tr>`;
         boardsTbody.innerHTML = `<tr><td colspan="4" class="muted">로그인 후 목록이 표시됩니다.</td></tr>`;
+        qnaTbody.innerHTML = `<tr><td colspan="6" class="muted">로그인 후 목록이 표시됩니다.</td></tr>`;
+        selectedPresenterDateKeyForQna = null;
+        selectedQnaDateKeyPill.textContent = "선택된 presenterDateKey: 전체";
+        btnQnaReload.disabled = true;
 
         showMsg("Google 로그인 후 사용하세요.", "muted");
     } else {
         showMsg("로그인 완료. Presenter CRUD 가능.", "ok");
         loadPresenters();
+        btnQnaReload.disabled = false;
+        loadQna(null);
     }
 });
 
@@ -362,8 +449,22 @@ boardsTbody.addEventListener("click", (ev) => {
     }
 });
 
+qnaTbody.addEventListener("click", (ev) => {
+    const btn = ev.target?.closest?.("button");
+    if (!btn) return;
+    const action = btn.dataset.qaction;
+    const qid = btn.dataset.qid;
+    if (action === "delete" && qid) {
+        deleteQna(qid);
+    }
+});
+
 btnBoardsReload.addEventListener("click", () => {
     loadBoards(selectedPresenterIdForBoards);
+});
+
+btnQnaReload.addEventListener("click", () => {
+    loadQna(selectedPresenterDateKeyForQna);
 });
 
 
@@ -377,3 +478,4 @@ resetForm();
 setFormDisabled(true);
 btnLogout.disabled = true;
 btnReload.disabled = true;
+btnQnaReload.disabled = true;

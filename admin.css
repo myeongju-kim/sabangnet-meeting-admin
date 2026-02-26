@@ -130,3 +130,9 @@ td.boardText {
     word-break: break-word;
     max-width: 520px;
 }
+
+td.qnaText {
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-width: 520px;
+}
