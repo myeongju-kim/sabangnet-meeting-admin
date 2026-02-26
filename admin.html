@@ -124,12 +124,12 @@
             <div class="row">
                 <h2 style="margin:0; font-size:16px;">QnA 관리</h2>
                 <div class="spacer"></div>
-                <div class="pill" id="selectedQnaDateKeyPill">선택된 presenterDateKey: 전체</div>
+                <div class="pill" id="selectedQnaPresenterPill">선택된 발표자: 없음</div>
                 <button id="btnQnaReload" disabled>QnA 새로고침</button>
             </div>
 
             <div class="muted" style="margin-top:8px;">
-                Presenter 목록에서 “수정”을 누르면 해당 발표자의 dateKey 기준으로 QnA를 필터링합니다. 선택이 없으면 전체 QnA를 표시합니다.
+                Presenter 목록에서 “수정”을 누르면 해당 발표자의 qna 서브컬렉션을 로드합니다.
             </div>
 
             <div style="margin-top:12px; overflow:auto;">
@@ -146,7 +146,7 @@
                     </thead>
                     <tbody id="qnaTbody">
                         <tr>
-                            <td colspan="6" class="muted">로그인 후 목록이 표시됩니다.</td>
+                            <td colspan="6" class="muted">발표자를 선택하세요.</td>
                         </tr>
                     </tbody>
                 </table>
